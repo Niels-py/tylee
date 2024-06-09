@@ -2,11 +2,11 @@ use crossterm::{
     cursor,
     event::{poll, read, Event, KeyCode},
     execute, queue,
-    style::{PrintStyledContent, Stylize},
+    style::{Color, PrintStyledContent, Stylize},
     terminal, ExecutableCommand,
 };
 use std::io::{self, Write};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 fn main() -> io::Result<()> {
     let mut stdout = io::stdout();
@@ -16,6 +16,7 @@ fn main() -> io::Result<()> {
     terminal::enable_raw_mode()?;
     execute!(io::stdout(), terminal::EnterAlternateScreen)?;
     let text = "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.".to_string();
+    let time: u64 = 30;
     let mut lines = split_into_lines(&text, width as usize / 2);
 
     init_lines(&lines, width, height)?;
@@ -24,7 +25,22 @@ fn main() -> io::Result<()> {
     let mut cursor_index = 0;
     let mut cursor_line_index = 0;
 
+    let start_time = SystemTime::now();
     loop {
+        {
+            let remaining_time = time - start_time.elapsed().unwrap().as_secs();
+            execute!(
+                io::stdout(),
+                cursor::SavePosition,
+                cursor::MoveTo(1, 1),
+                // print extra whitespaces so there aren't any trailing digits
+                PrintStyledContent((remaining_time.to_string() + "     ").with(Color::Yellow)),
+                cursor::RestorePosition
+            )?;
+            if remaining_time == 0 {
+                break;
+            }
+        }
         if poll(Duration::from_millis(500))? {
             match read()? {
                 Event::Resize(w, h) => {
@@ -125,10 +141,31 @@ fn main() -> io::Result<()> {
             }
         }
     }
-
     // disable raw buffer
     terminal::disable_raw_mode()?;
     execute!(io::stdout(), terminal::LeaveAlternateScreen)?;
+
+    let time_typed = start_time.elapsed().unwrap().as_secs();
+
+    let mut words_typed = 0;
+    let mut chars_typed = 0;
+    for (index, line) in lines.iter().enumerate() {
+        words_typed += line.split_whitespace().count();
+        chars_typed += line.len();
+        if index > cursor_line_index {
+            words_typed += line[0..cursor_index].split_whitespace().count();
+            chars_typed += cursor_index;
+            break;
+        }
+    }
+    let pure_wpm = words_typed as f64 * (60. / time_typed as f64);
+    let wpm = chars_typed as f64 / 5. * (60. / time_typed as f64);
+
+    println!(" time typed: {}", time_typed);
+    println!("words typed: {}", words_typed);
+    println!("chars typed: {}", chars_typed);
+    println!("   pure wpm: {:.2}", pure_wpm);
+    println!("        wpm: {:.2}", wpm);
 
     Ok(())
 }
@@ -169,7 +206,7 @@ fn init_lines(lines: &[String], width: u16, height: u16) -> io::Result<()> {
 
     queue!(
         io::stdout(),
-        cursor::MoveTo((width - lines[0].len() as u16) / 2, start_height,)
+        cursor::MoveTo((width - lines[0].len() as u16) / 2, start_height)
     )?;
     Ok(())
 }
