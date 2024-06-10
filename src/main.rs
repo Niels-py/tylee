@@ -2,7 +2,7 @@ use crossterm::{
     cursor,
     event::{poll, read, Event, KeyCode},
     execute, queue,
-    style::{Color, PrintStyledContent, Stylize},
+    style::{Color, Print, PrintStyledContent, Stylize},
     terminal, ExecutableCommand,
 };
 use std::io::{self, Write};
@@ -27,20 +27,6 @@ fn main() -> io::Result<()> {
 
     let start_time = SystemTime::now();
     loop {
-        {
-            let remaining_time = time - start_time.elapsed().unwrap().as_secs();
-            execute!(
-                io::stdout(),
-                cursor::SavePosition,
-                cursor::MoveTo(1, 1),
-                // print extra whitespaces so there aren't any trailing digits
-                PrintStyledContent((remaining_time.to_string() + "     ").with(Color::Yellow)),
-                cursor::RestorePosition
-            )?;
-            if remaining_time == 0 {
-                break;
-            }
-        }
         if poll(Duration::from_millis(500))? {
             match read()? {
                 Event::Resize(w, h) => {
@@ -140,6 +126,37 @@ fn main() -> io::Result<()> {
                 _ => break,
             }
         }
+        {
+            let elapsed_time = start_time.elapsed().unwrap().as_secs();
+            let remaining_time = time - elapsed_time;
+
+            // draw number
+            execute!(
+                io::stdout(),
+                cursor::SavePosition,
+                cursor::MoveTo(1, 1),
+                // print extra whitespaces so there aren't any trailing digits
+                PrintStyledContent((remaining_time.to_string() + "     ").with(Color::Yellow)),
+                cursor::RestorePosition
+            )?;
+
+            // draw bar
+            execute!(
+                io::stdout(),
+                cursor::SavePosition,
+                cursor::MoveTo(0, 0),
+                Print(" ".repeat(width as usize)),
+                cursor::MoveTo(0, 0),
+                PrintStyledContent(
+                    "#".repeat((width as f64 * (remaining_time as f64 / time as f64)) as usize)
+                        .with(Color::Green)
+                ),
+                cursor::RestorePosition
+            )?;
+            if remaining_time == 0 {
+                break;
+            }
+        }
     }
     // disable raw buffer
     terminal::disable_raw_mode()?;
@@ -159,13 +176,13 @@ fn main() -> io::Result<()> {
         }
     }
     let pure_wpm = words_typed as f64 * (60. / time_typed as f64);
-    let wpm = chars_typed as f64 / 5. * (60. / time_typed as f64);
+    let raw_wpm = chars_typed as f64 / 5. * (60. / time_typed as f64);
 
     println!(" time typed: {}", time_typed);
     println!("words typed: {}", words_typed);
     println!("chars typed: {}", chars_typed);
     println!("   pure wpm: {:.2}", pure_wpm);
-    println!("        wpm: {:.2}", wpm);
+    println!("    raw wpm: {:.2}", raw_wpm);
 
     Ok(())
 }
