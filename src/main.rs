@@ -3,30 +3,46 @@ use crossterm::{
     event::{poll, read, Event, KeyCode},
     execute, queue,
     style::{Color, Print, PrintStyledContent, Stylize},
-    terminal, ExecutableCommand,
+    terminal,
 };
-use std::io::{self, Write};
+use rand::seq::IteratorRandom;
+use rand::thread_rng;
+use std::io::{self, IsTerminal, Read, Write};
 use std::time::{Duration, SystemTime};
 
+mod word_lists;
+
 fn main() -> io::Result<()> {
-    let mut stdout = io::stdout();
     let (mut width, mut height) = terminal::size()?;
+
+    // stdin
+    let mut text: String = String::new();
+    if !io::stdin().is_terminal() {
+        // so, if stdin is from a program piped into this program
+        io::stdin().read_to_string(&mut text)?;
+    }
+    text = text.trim().to_string();
 
     // create raw buffer
     terminal::enable_raw_mode()?;
     execute!(io::stdout(), terminal::EnterAlternateScreen)?;
-    let text = "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.".to_string();
+    if text.is_empty() {
+        text = get_text(50)?;
+    }
     let time: u64 = 30;
     let mut lines = split_into_lines(&text, width as usize / 2);
 
     init_lines(&lines, width, height)?;
-    stdout.flush()?;
+    io::stdout().flush()?;
 
     let mut cursor_index = 0;
     let mut cursor_line_index = 0;
 
     let start_time = SystemTime::now();
-    loop {
+    let mut remaining_time = time;
+
+    while remaining_time != 0 {
+        draw_timer(&mut remaining_time, start_time, width, time)?;
         if poll(Duration::from_millis(500))? {
             match read()? {
                 Event::Resize(w, h) => {
@@ -38,13 +54,13 @@ fn main() -> io::Result<()> {
                     lines = split_into_lines(&text, (width / 2) as usize);
 
                     init_lines(&lines, width, height)?;
-                    stdout.flush()?;
+                    io::stdout().flush()?;
                 }
                 Event::FocusGained => {
-                    stdout.execute(cursor::EnableBlinking)?;
+                    execute!(io::stdout(), cursor::EnableBlinking)?;
                 }
                 Event::FocusLost => {
-                    stdout.execute(cursor::DisableBlinking)?;
+                    execute!(io::stdout(), cursor::DisableBlinking)?;
                 }
                 // Mouse capture disabled by default
                 // Event::Mouse(_) => {}
@@ -77,7 +93,7 @@ fn main() -> io::Result<()> {
                             cursor_index += 1;
                         }
 
-                        stdout.flush()?;
+                        io::stdout().flush()?;
                     }
                     KeyCode::Backspace => {
                         if cursor_index == 0 && cursor_line_index == 0 {
@@ -118,43 +134,12 @@ fn main() -> io::Result<()> {
                             queue!(io::stdout(), cursor::MoveLeft(1))?;
                         }
 
-                        stdout.flush()?;
+                        io::stdout().flush()?;
                     }
                     KeyCode::Esc => break,
                     _ => {}
                 },
                 _ => break,
-            }
-        }
-        {
-            let elapsed_time = start_time.elapsed().unwrap().as_secs();
-            let remaining_time = time - elapsed_time;
-
-            // draw number
-            execute!(
-                io::stdout(),
-                cursor::SavePosition,
-                cursor::MoveTo(1, 1),
-                // print extra whitespaces so there aren't any trailing digits
-                PrintStyledContent((remaining_time.to_string() + "     ").with(Color::Yellow)),
-                cursor::RestorePosition
-            )?;
-
-            // draw bar
-            execute!(
-                io::stdout(),
-                cursor::SavePosition,
-                cursor::MoveTo(0, 0),
-                Print(" ".repeat(width as usize)),
-                cursor::MoveTo(0, 0),
-                PrintStyledContent(
-                    "#".repeat((width as f64 * (remaining_time as f64 / time as f64)) as usize)
-                        .with(Color::Green)
-                ),
-                cursor::RestorePosition
-            )?;
-            if remaining_time == 0 {
-                break;
             }
         }
     }
@@ -226,4 +211,49 @@ fn init_lines(lines: &[String], width: u16, height: u16) -> io::Result<()> {
         cursor::MoveTo((width - lines[0].len() as u16) / 2, start_height)
     )?;
     Ok(())
+}
+
+fn draw_timer(
+    remaining_time: &mut u64,
+    start_time: SystemTime,
+    width: u16,
+    time: u64,
+) -> io::Result<()> {
+    *remaining_time = time - start_time.elapsed().unwrap().as_secs();
+
+    // draw number
+    execute!(
+        io::stdout(),
+        cursor::SavePosition,
+        cursor::MoveTo(1, 1),
+        // print extra whitespaces so there aren't any trailing digits
+        PrintStyledContent((remaining_time.to_string() + "     ").with(Color::Yellow)),
+        cursor::RestorePosition
+    )?;
+
+    // draw bar
+    execute!(
+        io::stdout(),
+        cursor::SavePosition,
+        cursor::MoveTo(0, 0),
+        Print(" ".repeat(width as usize)),
+        cursor::MoveTo(0, 0),
+        PrintStyledContent(
+            "#".repeat((width as f64 * (*remaining_time as f64 / time as f64)) as usize)
+                .with(Color::Green)
+        ),
+        cursor::RestorePosition
+    )?;
+
+    Ok(())
+}
+
+fn get_text(amount_of_words: usize) -> io::Result<String> {
+    let mut text = String::new();
+    let mut rng = thread_rng();
+    for _ in 0..amount_of_words {
+        text.push_str(word_lists::DEFAULT_ENGLISH.iter().choose(&mut rng).unwrap());
+        text.push(' ');
+    }
+    Ok(text)
 }
