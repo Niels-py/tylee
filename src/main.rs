@@ -2,7 +2,7 @@ use crossterm::{
     cursor,
     event::{poll, read, Event, KeyCode},
     execute, queue,
-    style::{Color, Print, PrintStyledContent, Stylize},
+    style::{Print, PrintStyledContent, Stylize},
     terminal,
 };
 use rand::seq::IteratorRandom;
@@ -15,22 +15,22 @@ mod word_lists;
 fn main() -> io::Result<()> {
     let (mut width, mut height) = terminal::size()?;
 
-    // stdin
+    // get text to write from stdin or random from 10_000 most common english words
     let mut text: String = String::new();
     if !io::stdin().is_terminal() {
         // so, if stdin is from a program piped into this program
         io::stdin().read_to_string(&mut text)?;
     }
     text = text.trim().to_string();
+    if text.is_empty() {
+        text = get_text(50)?;
+    }
+    let duration: Duration = Duration::from_secs(10);
+    let mut lines = split_into_lines(&text, width as usize / 2);
 
     // create raw buffer
     terminal::enable_raw_mode()?;
     execute!(io::stdout(), terminal::EnterAlternateScreen)?;
-    if text.is_empty() {
-        text = get_text(50)?;
-    }
-    let time: u64 = 30;
-    let mut lines = split_into_lines(&text, width as usize / 2);
 
     init_lines(&lines, width, height)?;
     io::stdout().flush()?;
@@ -39,11 +39,14 @@ fn main() -> io::Result<()> {
     let mut cursor_line_index = 0;
 
     let start_time = SystemTime::now();
-    let mut remaining_time = time;
 
-    while remaining_time != 0 {
-        draw_timer(&mut remaining_time, start_time, width, time)?;
-        if poll(Duration::from_millis(500))? {
+    while let Some(remaining_time) = start_time
+        .elapsed()
+        .ok()
+        .and_then(|elapsed| duration.checked_sub(elapsed))
+    {
+        draw_timer(&remaining_time, &duration, width)?;
+        if poll(Duration::from_millis(100))? {
             match read()? {
                 Event::Resize(w, h) => {
                     width = w;
@@ -147,23 +150,24 @@ fn main() -> io::Result<()> {
     terminal::disable_raw_mode()?;
     execute!(io::stdout(), terminal::LeaveAlternateScreen)?;
 
-    let time_typed = start_time.elapsed().unwrap().as_secs();
+    // millis instead of second for higher accuracy
+    let time_typed = start_time.elapsed().unwrap().as_millis();
 
     let mut words_typed = 0;
     let mut chars_typed = 0;
     for (index, line) in lines.iter().enumerate() {
-        words_typed += line.split_whitespace().count();
-        chars_typed += line.len();
-        if index > cursor_line_index {
+        if index >= cursor_line_index {
             words_typed += line[0..cursor_index].split_whitespace().count();
             chars_typed += cursor_index;
             break;
         }
+        words_typed += line.split_whitespace().count();
+        chars_typed += line.len();
     }
-    let pure_wpm = words_typed as f64 * (60. / time_typed as f64);
-    let raw_wpm = chars_typed as f64 / 5. * (60. / time_typed as f64);
+    let pure_wpm = words_typed as f64 * (60000. / time_typed as f64);
+    let raw_wpm = chars_typed as f64 / 5. * (60000. / time_typed as f64);
 
-    println!(" time typed: {}", time_typed);
+    println!(" time typed: {}", time_typed / 1000);
     println!("words typed: {}", words_typed);
     println!("chars typed: {}", chars_typed);
     println!("   pure wpm: {:.2}", pure_wpm);
@@ -213,21 +217,14 @@ fn init_lines(lines: &[String], width: u16, height: u16) -> io::Result<()> {
     Ok(())
 }
 
-fn draw_timer(
-    remaining_time: &mut u64,
-    start_time: SystemTime,
-    width: u16,
-    time: u64,
-) -> io::Result<()> {
-    *remaining_time = time - start_time.elapsed().unwrap().as_secs();
-
+fn draw_timer(remaining_time: &Duration, duration: &Duration, width: u16) -> io::Result<()> {
     // draw number
     execute!(
         io::stdout(),
         cursor::SavePosition,
         cursor::MoveTo(1, 1),
         // print extra whitespaces so there aren't any trailing digits
-        PrintStyledContent((remaining_time.to_string() + "     ").with(Color::Yellow)),
+        PrintStyledContent((remaining_time.as_secs().to_string() + "     ").yellow()),
         cursor::RestorePosition
     )?;
 
@@ -239,8 +236,12 @@ fn draw_timer(
         Print(" ".repeat(width as usize)),
         cursor::MoveTo(0, 0),
         PrintStyledContent(
-            "#".repeat((width as f64 * (*remaining_time as f64 / time as f64)) as usize)
-                .with(Color::Green)
+            "#".repeat(
+                (width as f64
+                    * (1. - remaining_time.as_millis() as f64 / duration.as_millis() as f64))
+                    as usize
+            )
+            .green()
         ),
         cursor::RestorePosition
     )?;
